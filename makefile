@@ -41,6 +41,7 @@ hello:
 	@echo   make check_deps       - Check system dependencies
 	@echo   make setup            - Install serverless plugins
 	@echo   make deploy_dev       - Deploy to dev environment
+	@echo   make deploy_prod      - Deploy to prod environment
 	@echo   make info_deploy_dev  - Show deployment info 
 	@echo   make test_createTodo  - Test createTodo function
 	@echo   make test_functions   - Test all Lambda functions
@@ -63,9 +64,16 @@ setup: check_deps
 	@echo [SETUP] Setup completed.
 
 deploy_dev:
-	@echo [DEPLOY] Deploying TODO service to DEV environment...
+	@echo [DEPLOY] Deploying TODO service to DEV environment with VPC...
+	@echo WARNING: VPC deployment may take longer due to VPC Endpoints
 	@serverless deploy --stage dev
-	@echo [DEPLOY] Deployment completed - 3 Lambda functions deployed.
+	@echo [DEPLOY] Deployment completed - 3 Lambda functions deployed in VPC.
+
+deploy_prod:
+	@echo [DEPLOY] Deploying TODO service to PROD environment with VPC...
+	@echo WARNING: VPC deployment may take longer due to VPC Endpoints
+	@serverless deploy --stage prod
+	@echo [DEPLOY] Deployment completed - 3 Lambda functions deployed in VPC.
 
 test_createTodo:
 	@echo [TEST] Running createTodo function...
@@ -132,9 +140,9 @@ endif
 	@echo.
 	@echo Table contents:
 ifeq ($(OS),Windows_NT)
-	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --projection-expression "title, processed_by" --output text --no-cli-pager 2>nul || echo ERROR: Could not read table
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --output text 2>nul || echo ERROR: Could not read table
 else
-	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --projection-expression "title, processed_by" --output text --no-cli-pager 2>/dev/null || echo ERROR: Could not read table
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --projection-expression "TITLE, PROCESSED_BY" --output text 2>/dev/null || echo ERROR: Could not read table
 endif
 	@echo.
 
@@ -211,6 +219,7 @@ test_all:
 	@echo - Use 'make test_createTodo' to test end-to-end workflow
 	@echo - Check AWS CloudWatch for detailed function logs
 	@echo - Architecture: createTodo -\> SQS -\> processTodo -\> imageProcessor -\> S3
+	@echo - All functions deployed in VPC with VPC Endpoints
 	@echo.
 
 clean_data:

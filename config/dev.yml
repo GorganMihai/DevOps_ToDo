@@ -1,3 +1,3 @@
-vpcId: vpc-PLACEHOLDER-DEV
+vpcId: vpc-09d10fxxx
 privateSubnetIds:
-  - subnet-PLACEHOLDER-DEV   
+  - subnet-0fb2098exxx   
