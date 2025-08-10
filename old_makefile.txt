@@ -1,0 +1,269 @@
+SHELL := /bin/bash
+
+# Detect OS
+ifeq ($(OS),Windows_NT)
+    DETECTED_OS := Windows
+    CHECK_CMD := where
+    NULL_DEVICE := >nul 2>&1
+else
+    DETECTED_OS := Unix
+    CHECK_CMD := command -v
+    NULL_DEVICE := >/dev/null 2>&1
+endif
+
+.PHONY: hello setup deploy_dev test_createTodo info_deploy_dev remove_dev logs test_functions check_deps clean_data show_table show_s3 test_all
+
+# Check system dependencies
+check_deps:
+	@echo ==================================================
+	@echo     System Check - $(DETECTED_OS)
+	@echo ==================================================
+ifeq ($(OS),Windows_NT)
+	@where serverless $(NULL_DEVICE) || (echo ERROR: Serverless Framework not found. Install with: npm install -g serverless && exit 1)
+	@where aws $(NULL_DEVICE) || (echo ERROR: AWS CLI not found. Install from: https://aws.amazon.com/cli/ && exit 1)
+	@aws sts get-caller-identity $(NULL_DEVICE) || (echo ERROR: AWS credentials not configured. Run: aws configure && exit 1)
+else
+	@$(CHECK_CMD) serverless $(NULL_DEVICE) || (echo ERROR: Serverless Framework not found. Install with: npm install -g serverless && exit 1)
+	@$(CHECK_CMD) aws $(NULL_DEVICE) || (echo ERROR: AWS CLI not found. Install from: https://aws.amazon.com/cli/ && exit 1)
+	@aws sts get-caller-identity $(NULL_DEVICE) || (echo ERROR: AWS credentials not configured. Run: aws configure && exit 1)
+endif
+	@echo OK: All dependencies found
+	@echo OK: AWS credentials configured
+	@echo.
+
+hello:
+	@echo ==================================================
+	@echo     Serverless TODO Service - Make Commands
+	@echo     Platform: $(DETECTED_OS) 
+	@echo ==================================================
+	@echo.
+	@echo Available commands:
+	@echo   make check_deps       - Check system dependencies
+	@echo   make setup            - Install serverless plugins
+	@echo   make deploy_dev       - Deploy to dev environment
+	@echo   make deploy_prod      - Deploy to prod environment
+	@echo   make info_deploy_dev  - Show deployment info 
+	@echo   make test_createTodo  - Test createTodo function
+	@echo   make test_functions   - Test all Lambda functions
+	@echo   make show_table       - Show DynamoDB table content
+	@echo   make show_s3          - Show S3 bucket content
+	@echo   make test_all         - Test all functions and show data
+	@echo   make logs             - Watch processTodo logs
+	@echo   make clean_data       - Clean S3 and DynamoDB data
+	@echo   make remove_dev       - Remove dev deployment
+	@echo.
+	@echo Examples:
+	@echo   make setup
+	@echo   make deploy_dev
+	@echo   make test_createTodo
+	@echo.
+
+setup: check_deps
+	@echo [SETUP] Installing Serverless plugins...
+	@serverless plugin install -n serverless-python-requirements
+	@echo [SETUP] Setup completed.
+
+deploy_dev:
+	@echo [DEPLOY] Ensuring VPC DNS settings are enabled...
+	@aws ec2 modify-vpc-attribute --vpc-id vpc-09d10fffa10645722 --enable-dns-support --region eu-west-1 2>/dev/null || true
+	@aws ec2 modify-vpc-attribute --vpc-id vpc-09d10fffa10645722 --enable-dns-hostnames --region eu-west-1 2>/dev/null || true
+	@echo [DEPLOY] Deploying TODO service to DEV environment with VPC...
+	@echo WARNING: VPC deployment may take longer due to VPC Endpoints
+	@serverless deploy --stage dev
+	@echo [DEPLOY] Deployment completed - 3 Lambda functions deployed in VPC.
+
+test_createTodo:
+	@echo [TEST] Running createTodo function...
+	@serverless invoke --function createTodo --stage dev --log
+	@echo [TEST] createTodo test completed.
+	@echo Waiting 5 seconds for async processing...
+ifeq ($(OS),Windows_NT)
+	@timeout /t 5 >nul
+else
+	@sleep 5
+endif
+	@$(MAKE) --no-print-directory show_s3
+	@$(MAKE) --no-print-directory show_table
+
+info_deploy_dev:
+	@echo [INFO] Showing deployment info...
+	@echo ==================================================
+	@echo SERVERLESS DEPLOYMENT INFO
+	@echo ==================================================
+	@serverless info --stage dev
+
+logs:
+	@echo [LOGS] Watching processTodo logs (Ctrl+C to stop)...
+	@serverless logs --function processTodo --stage dev --tail
+
+remove_dev:
+	@echo [REMOVE] WARNING: This will remove the entire stack!
+	@echo Press Ctrl+C in the next 5 seconds to cancel...
+ifeq ($(OS),Windows_NT)
+	@timeout /t 5 /nobreak >nul
+else
+	@sleep 5
+endif
+	@echo [REMOVE] Removing stack...
+	@serverless remove --stage dev
+	@echo [REMOVE] Stack removed.
+
+test_functions:
+	@echo ==================================================
+	@echo [TEST] Testing all Lambda functions
+	@echo ==================================================
+	@echo.
+	@echo --- Testing createTodo ---
+	@serverless invoke --function createTodo --stage dev --log || echo ERROR: createTodo failed
+	@echo.
+	@echo --- Testing imageProcessor ---
+	@serverless invoke --function imageProcessor --stage dev --log || echo ERROR: imageProcessor failed
+	@echo.
+	@echo Note: processTodo is SQS-triggered and tested via createTodo workflow
+	@echo.
+
+show_table:
+	@echo ==================================================
+	@echo [TABLE] DynamoDB Table Content
+	@echo ==================================================
+	@echo Table: todo-serverless-service-dev-todos
+	@echo.
+	@echo Table item count:
+ifeq ($(OS),Windows_NT)
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --select COUNT --output text --query Count 2>nul || echo ERROR: Could not get item count
+else
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --select COUNT --output text --query Count 2>/dev/null || echo ERROR: Could not get item count
+endif
+	@echo.
+	@echo Table contents:
+ifeq ($(OS),Windows_NT)
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --output text 2>nul || echo ERROR: Could not read table
+else
+	-@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --projection-expression "TITLE, PROCESSED_BY" --output text 2>/dev/null || echo ERROR: Could not read table
+endif
+	@echo.
+
+show_s3:
+	@echo ==================================================
+	@echo [S3] Bucket Content - Generated Images
+	@echo ==================================================
+	@echo Getting AWS Account ID...
+ifeq ($(OS),Windows_NT)
+	@for /f %%i in ('aws sts get-caller-identity --query Account --output text 2^>nul') do @( \
+		set ACCOUNT_ID=%%i && \
+		echo Bucket: todo-serverless-service-dev-artifacts-%%i && \
+		echo. && \
+		echo Objects: && \
+		aws s3 ls s3://todo-serverless-service-dev-artifacts-%%i --recursive 2>nul || echo ERROR: Could not access bucket && \
+		echo. \
+	)
+else
+	@ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && \
+	BUCKET_NAME="todo-serverless-service-dev-artifacts-$$ACCOUNT_ID" && \
+	echo "Bucket: $$BUCKET_NAME" && \
+	echo && \
+	echo "Objects:" && \
+	aws s3 ls "s3://$$BUCKET_NAME" --recursive 2>/dev/null || echo "ERROR: Could not access bucket" && \
+	echo && \
+	echo "Direct URLs:" && \
+	aws s3api list-objects-v2 --bucket "$$BUCKET_NAME" --query "Contents[?Size > '0'].Key" --output text 2>/dev/null | \
+	while read -r key; do \
+		if [ ! -z "$$key" ]; then \
+			echo "https://$$BUCKET_NAME.s3.eu-west-1.amazonaws.com/$$key"; \
+		fi; \
+	done || echo "No objects found or bucket not accessible"
+endif
+	@echo.
+
+test_all:
+	@echo Starting complete test suite 
+	@echo.
+	
+	@echo ==================================================
+	@echo 1. DEPLOYMENT INFO
+	@echo ==================================================
+	@$(MAKE) --no-print-directory info_deploy_dev
+	@echo.
+	
+	@echo ==================================================
+	@echo 2. LAMBDA FUNCTIONS TEST 
+	@echo ==================================================
+	@$(MAKE) --no-print-directory test_functions
+	@echo.
+	
+	@echo ==================================================
+	@echo 3. DYNAMODB TABLE CONTENT
+	@echo ==================================================
+	@$(MAKE) --no-print-directory show_table
+	@echo.
+	
+	@echo ==================================================
+	@echo 4. S3 BUCKET CONTENT
+	@echo ==================================================
+	@$(MAKE) --no-print-directory show_s3
+	@echo.
+	
+	@echo ==================================================
+	@echo COMPLETE TEST SUITE FINISHED
+	@echo ==================================================
+	@echo Summary:
+	@echo - 3 Lambda functions tested
+	@echo - DynamoDB table content displayed
+	@echo - S3 bucket content listed
+	@echo.
+	@echo Tips:
+	@echo - Use 'make logs' to watch real-time processTodo logs
+	@echo - Use 'make test_createTodo' to test end-to-end workflow
+	@echo - Check AWS CloudWatch for detailed function logs
+	@echo - Architecture: createTodo -\> SQS -\> processTodo -\> imageProcessor -\> S3
+	@echo - All functions deployed in VPC with VPC Endpoints
+	@echo.
+
+clean_data:
+	@echo ==================================================
+	@echo [CLEAN] Deleting S3 objects and DynamoDB items...
+	@echo ==================================================
+ifeq ($(OS),Windows_NT)
+	@for /f %%i in ('aws sts get-caller-identity --query Account --output text 2^>nul') do @( \
+		set "ACCOUNT_ID=%%i" && \
+		set "BUCKET_NAME=todo-serverless-service-dev-artifacts-%%i" && \
+		call echo Deleting all objects in S3 bucket: %%BUCKET_NAME%% && \
+		call aws s3 rm s3://%%BUCKET_NAME%% --recursive || echo ERROR: Could not clean S3 bucket \
+	)
+
+	@echo Fetching id and created_at keys from DynamoDB...
+	@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --query "Items[].[id.S, created_at.S]" --output text > items.txt
+
+	@for /f "tokens=1,2" %%A in (items.txt) do @( \
+		echo Deleting item with id=%%A and created_at=%%B && \
+		aws dynamodb delete-item --table-name todo-serverless-service-dev-todos --region eu-west-1 --key "{\"id\": {\"S\": \"%%A\"}, \"created_at\": {\"S\": \"%%B\"}}" \
+	)
+
+	@del items.txt
+else
+	@ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && \
+	BUCKET_NAME="todo-serverless-service-dev-artifacts-$$ACCOUNT_ID" && \
+	echo "Deleting all objects in S3 bucket: $$BUCKET_NAME" && \
+	aws s3 rm "s3://$$BUCKET_NAME" --recursive || echo "ERROR: Could not clean S3 bucket"
+	@aws dynamodb scan --table-name todo-serverless-service-dev-todos --region eu-west-1 --query "Items[].[id.S, created_at.S]" --output text | \
+	while read id created_at; do \
+		if [ ! -z "$$id" ] && [ ! -z "$$created_at" ]; then \
+			echo "Deleting item with id=$$id and created_at=$$created_at"; \
+			aws dynamodb delete-item --table-name todo-serverless-service-dev-todos --region eu-west-1 --key "{\"id\": {\"S\": \"$$id\"}, \"created_at\": {\"S\": \"$$created_at\"}}" || \
+			echo "Failed to delete item with ID: $$id"; \
+		fi; \
+	done
+endif
+	@echo [CLEAN] Cleanup complete.
+
+	@echo ==================================================
+	@echo 	S3 BUCKET CONTENT
+	@echo ==================================================
+	@$(MAKE) --no-print-directory show_s3
+	@echo.
+
+	@echo ==================================================
+	@echo 	DYNAMODB TABLE CONTENT
+	@echo ==================================================
+	@$(MAKE) --no-print-directory show_table
+	@echo.

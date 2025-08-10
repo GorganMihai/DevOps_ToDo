@@ -1,0 +1,5 @@
+region: region-PLACEHOLDER-STAGE
+vpcId: vpc-PLACEHOLDER-STAGE
+privateSubnetIds:
+  - subnet-PLACEHOLDER-STAGE
+  

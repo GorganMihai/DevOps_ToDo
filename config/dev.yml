@@ -1,0 +1,4 @@
+region: eu-west-1
+vpcId: vpc-09d10fffa10xxx
+privateSubnetIds:
+  - subnet-0fb2098e31d9xxx  

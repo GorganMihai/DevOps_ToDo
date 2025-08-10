@@ -1,0 +1,223 @@
+service: todo-serverless-service
+
+frameworkVersion: '4.17.1'
+
+provider:
+  name: aws
+  runtime: python3.13
+  region: ${opt:region, 'eu-west-1'}
+  stage: ${opt:stage, 'dev'}
+  
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds: ${file(config/${self:provider.stage}.yml):privateSubnetIds}
+  
+  environment:
+    TODO_TABLE: !Ref TodosTable
+    PROCESSING_QUEUE_URL: !Ref ProcessingQueue
+    S3_BUCKET_NAME: !Ref ArtifactsBucket
+    STAGE: ${self:provider.stage}
+    
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource: !GetAtt TodosTable.Arn
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+          Resource: !GetAtt ProcessingQueue.Arn
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource: !Sub "${ArtifactsBucket.Arn}/*"
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: 
+            - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${self:service}-${self:provider.stage}-*"
+        - Effect: Allow
+          Action:
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+          Resource: "*"
+
+plugins:
+  - serverless-python-requirements
+
+functions:
+  createTodo:
+    handler: create_todo.handler
+    description: Create TODO items - manual trigger
+    timeout: 30
+    memorySize: 128
+
+  processTodo:
+    handler: process_todo.handler
+    description: Process TODO items from SQS
+    timeout: 60
+    memorySize: 128
+    events:
+      - sqs:
+          arn: !GetAtt ProcessingQueue.Arn
+          batchSize: 5
+          
+  imageProcessor:
+    handler: image_processor.handler
+    description: Create real VOIS DevOps branded images - manual trigger
+    timeout: 60
+    memorySize: 512
+
+resources:
+  Resources:
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for TODO service Lambda functions
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        Tags:
+          - Key: Name
+            Value: ${self:service}-${self:provider.stage}-private-rt
+
+    PrivateSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: 
+          Fn::Select:
+            - 0
+            - ${file(config/${self:provider.stage}.yml):privateSubnetIds}
+        RouteTableId: !Ref PrivateRouteTable
+
+    VPCEndpointDynamoDB:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        ServiceName: com.amazonaws.${self:provider.region}.dynamodb
+        VpcEndpointType: Gateway
+        RouteTableIds:
+          - !Ref PrivateRouteTable
+          
+    VPCEndpointS3:
+      Type: AWS::EC2::VPCEndpoint  
+      Properties:
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        ServiceName: com.amazonaws.${self:provider.region}.s3
+        VpcEndpointType: Gateway
+        RouteTableIds:
+          - !Ref PrivateRouteTable
+          
+    VPCEndpointSQS:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        ServiceName: com.amazonaws.${self:provider.region}.sqs
+        VpcEndpointType: Interface
+        SubnetIds: ${file(config/${self:provider.stage}.yml):privateSubnetIds}
+        SecurityGroupIds:
+          - !Ref VPCEndpointSecurityGroup
+        PrivateDnsEnabled: true
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action:
+                - sqs:*
+              Resource: '*'
+          
+    VPCEndpointLambda:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        ServiceName: com.amazonaws.${self:provider.region}.lambda
+        VpcEndpointType: Interface
+        SubnetIds: ${file(config/${self:provider.stage}.yml):privateSubnetIds}
+        SecurityGroupIds:
+          - !Ref VPCEndpointSecurityGroup
+        PrivateDnsEnabled: true
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action:
+                - lambda:*
+              Resource: '*'
+          
+    VPCEndpointSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for VPC endpoints
+        VpcId: ${file(config/${self:provider.stage}.yml):vpcId}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+    TodosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-todos
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: created_at
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: created_at
+            KeyType: RANGE
+            
+    ProcessingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-processing
+        VisibilityTimeout: 120
+
+    ArtifactsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-artifacts-${aws:accountId}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+
+  Outputs:
+    TodoTableName:
+      Description: DynamoDB Table Name
+      Value: !Ref TodosTable
+      
+    ProcessingQueueUrl:
+      Description: SQS Processing Queue URL
+      Value: !Ref ProcessingQueue
+      
+    S3BucketName:
+      Description: S3 Bucket for Images
+      Value: !Ref ArtifactsBucket
+      
+    S3BucketUrl:
+      Description: S3 Bucket URL
+      Value: !Sub "https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com"

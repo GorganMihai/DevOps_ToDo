@@ -1,0 +1,4 @@
+region: region-PLACEHOLDER-PROD
+vpcId: vpc-PLACEHOLDER-PROD
+privateSubnetIds:
+  - subnet-PLACEHOLDER-PROD
