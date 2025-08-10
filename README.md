@@ -41,13 +41,27 @@ Before running this project, ensure you have:
 
 ## 🚀 Quick Start
 
+### 1. Create VPC and Private Subnet
+## Steps
+
+1. **Create the VPC**
+   - Define the CIDR block (e.g., `10.10.0.0/16`)
+   - Assign a name tag to the VPC
+
+2. **Create the Private Subnet**
+   - Define a CIDR block within the VPC (e.g., `10.10.1.0/24`)
+   - Configure the subnet as private (no route to an internet gateway)
+   - Assign a name tag to the subnet
+
+
 ### 1. Replace placeholders in config files
 ```yaml
 # conf/dev.yml
 
-vpcId: vpc-PLACEHOLDER-DEV
+region: eu-west-1
+vpcId: vpc-09d10xxxxxxxxxx
 privateSubnetIds:
-  - subnet-PLACEHOLDER-DEV
+  - subnet-0fb20xxxxxxxxxx  
 ```
 
 ### 2. Check Dependencies
@@ -92,24 +106,26 @@ make test_createTodo
 | Command | Description |
 |---------|-------------|
 | `make hello` | Show all available commands |
+| `make show_config` | Show current configuration |
 | `make check_deps` | Check system dependencies |
 | `make setup` | Install serverless plugins |
-| `make deploy_dev` | Deploy to dev environment |
-| `make test_createTodo` | Test createTodo function |
+| `make deploy` | Deploy to the environment |
+| `make info` | Show deployment info |
+| `make test_createTodo` | Test the createTodo function |
 | `make test_functions` | Test all Lambda functions |
 | `make test_all` | Complete test suite |
 | `make show_table` | Show DynamoDB table content |
 | `make show_s3` | Show S3 bucket content |
-| `make logs` | Watch processTodo logs |
+| `make logs` | Monitor processTodo logs |
 | `make clean_data` | Clean S3 and DynamoDB data |
-| `make remove_dev` | Remove dev deployment |
+| `make remove_dev` | Remove the deployment |
 
 ## 🔧 Lambda Functions
 
 ### 1. createTodo
 - **Purpose**: Creates new TODO items
 - **Trigger**: Manual invoke
-- **Timeout**: 10 seconds
+- **Timeout**: 30 seconds
 - **Actions**: 
   - Generates UUID and timestamp
   - Creates TODO item
@@ -119,7 +135,7 @@ make test_createTodo
 ### 2. processTodo
 - **Purpose**: Processes TODO items from SQS
 - **Trigger**: SQS messages (batch size: 5)
-- **Timeout**: 30 seconds
+- **Timeout**: 60 seconds
 - **Actions**:
   - Updates TODO status to "processed"
   - Adds processing timestamp
@@ -128,7 +144,7 @@ make test_createTodo
 ### 3. imageProcessor
 - **Purpose**: Creates branded SVG images
 - **Trigger**: Invoked by processTodo
-- **Timeout**: 45 seconds
+- **Timeout**: 60 seconds
 - **Memory**: 512MB
 - **Actions**:
   - Creates red SVG (500x500px)
@@ -225,18 +241,26 @@ The application uses IAM roles with minimal required permissions:
 
 ## 🌍 Multi-Environment Support
 
-Deploy to different environments:
-
+#####  ⚙️ Changing the Environment via Makefile:
+To switch environments easily, update the Makefile by modifying the ENVIRONMENT variable:
 ```bash
-# Development
-serverless deploy --stage dev
-
-# Staging  
-serverless deploy --stage stage
-
-# Production
-serverless deploy --stage prod
+# ============================================
+# CHANGE THIS TO SWITCH ENVIRONMENT
+# ============================================
+ENVIRONMENT := dev
+# Options: dev, stage, prod
 ```
+
+In addition to Serverless' native environment options, you can further customize environments using configuration files. In the conf folder, there are separate YAML configuration files for each environment, dev.yml, stage.yml, and prod.yml. Each file contains environment-specific settings such as AWS region, VPC ID, and private subnet IDs.
+
+```yaml
+region: eu-west-1
+vpcId: vpc-09d10fffa10xxx
+privateSubnetIds:
+  - subnet-0fb2098e31d9xxx
+```
+
+If desired, you can copy the same configuration details into each file and deploy them to the same environment. This allows flexibility in managing and reusing environment configurations as needed.
 
 ## 🧹 Cleanup
 

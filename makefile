@@ -77,6 +77,7 @@ hello:
 	@echo Currently using: config/$(ENVIRONMENT).yml
 	@echo ==================================================
 	@echo Available commands:
+	@echo   make hello            - Show all available commands
 	@echo   make show_config      - Show current configuration
 	@echo   make check_deps       - Check system dependencies
 	@echo   make setup            - Install serverless plugins
